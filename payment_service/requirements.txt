@@ -1,2 +1,6 @@
 Django==5.1.7
-djangorestframework
+djangorestframework==3.14.0
+stripe==5.5.0
+paypalcheckoutsdk==1.0.1
+python-dotenv==1.0.0
+psycopg2-binary==2.9.9

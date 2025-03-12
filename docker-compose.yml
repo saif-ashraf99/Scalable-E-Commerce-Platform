@@ -34,13 +34,44 @@ services:
       - "8004:8000"
     environment:
       - DEBUG=1
-
-  notification-service:
-    build: ./notification-service
-    ports:
-      - "8005:8000"
+      
+  notifications-service:
+    build: ./notifications-service
     environment:
-      - DEBUG=1
+      - DB_HOST=notifications-db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - TWILIO_ACCOUNT_SID=your_account_sid
+      - TWILIO_AUTH_TOKEN=your_auth_token
+      - SMTP_HOST=smtp.example.com
+      - SMTP_PORT=587
+      - SMTP_USER=user@example.com
+      - SMTP_PASSWORD=password
+    ports:
+      - "8006:8000"
+    depends_on:
+      - notifications-db
+      - redis
+
+  notifications-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=notifications
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+
+  celery-worker:
+    build: ./notifications-service
+    command: celery -A notification_service worker --loglevel=info
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - notifications-service
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
 
   api-gateway:
     image: nginx:alpine
