@@ -1,81 +1,230 @@
 version: '3.8'
+
 services:
-  user-service:
-    build: ./user-service
-    ports:
-      - "8000:8000"
-    environment:
-      - DEBUG=1
-
-  product-service:
-    build: ./product-service
-    ports:
-      - "8001:8000"
-    environment:
-      - DEBUG=1
-
-  cart-service:
-    build: ./cart-service
-    ports:
-      - "8002:8000"
-    environment:
-      - DEBUG=1
-
-  order-service:
-    build: ./order-service
-    ports:
-      - "8003:8000"
-    environment:
-      - DEBUG=1
-
-  payment-service:
-    build: ./payment-service
-    ports:
-      - "8004:8000"
-    environment:
-      - DEBUG=1
-      
-  notifications-service:
-    build: ./notifications-service
-    environment:
-      - DB_HOST=notifications-db
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - TWILIO_ACCOUNT_SID=your_account_sid
-      - TWILIO_AUTH_TOKEN=your_auth_token
-      - SMTP_HOST=smtp.example.com
-      - SMTP_PORT=587
-      - SMTP_USER=user@example.com
-      - SMTP_PASSWORD=password
-    ports:
-      - "8006:8000"
-    depends_on:
-      - notifications-db
-      - redis
-
-  notifications-db:
-    image: postgres:13-alpine
-    environment:
-      - POSTGRES_DB=notifications
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-
-  celery-worker:
-    build: ./notifications-service
-    command: celery -A notification_service worker --loglevel=info
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-    depends_on:
-      - redis
-      - notifications-service
-
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-
+  # API Gateway
   api-gateway:
     image: nginx:alpine
     ports:
       - "80:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./api-gateway/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - user-service
+      - product-service
+      - cart-service
+      - order-service
+      - payment-service
+      - notification-service
+    networks:
+      - ecommerce-net
+
+  # User Service
+  user-service:
+    build: ./user-service
+    environment:
+      - DB_HOST=user-db
+      - DB_NAME=user
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "8001:8000"
+    depends_on:
+      - user-db
+    networks:
+      - ecommerce-net
+
+  user-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=user
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - user-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-net
+
+  # Product Service
+  product-service:
+    build: ./product-service
+    environment:
+      - DB_HOST=product-db
+      - DB_NAME=product
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+    ports:
+      - "8002:8000"
+    depends_on:
+      - product-db
+    networks:
+      - ecommerce-net
+
+  product-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=product
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - product-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+    networks:
+      - ecommerce-net
+
+  # Cart Service
+  cart-service:
+    build: ./cart-service
+    environment:
+      - REDIS_HOST=redis
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "8003:8000"
+    depends_on:
+      - redis
+    networks:
+      - ecommerce-net
+
+  redis:
+    image: redis:alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - ecommerce-net
+
+  # Order Service
+  order-service:
+    build: ./order-service
+    environment:
+      - DB_HOST=order-db
+      - DB_NAME=order
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "8004:8000"
+    depends_on:
+      - order-db
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce-net
+
+  order-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=order
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - order-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+    networks:
+      - ecommerce-net
+
+  # Payment Service
+  payment-service:
+    build: ./payment-service
+    environment:
+      - DB_HOST=payment-db
+      - DB_NAME=payment
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID}
+      - PAYPAL_SECRET=${PAYPAL_SECRET}
+    ports:
+      - "8005:8000"
+    depends_on:
+      - payment-db
+      - rabbitmq
+    networks:
+      - ecommerce-net
+
+  payment-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=payment
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - payment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+    networks:
+      - ecommerce-net
+
+  # Notification Service
+  notification-service:
+    build: ./notification-service
+    environment:
+      - DB_HOST=notification-db
+      - DB_NAME=notification
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+    ports:
+      - "8006:8000"
+    depends_on:
+      - notification-db
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce-net
+
+  notification-db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=notification
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - notification-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+    networks:
+      - ecommerce-net
+
+  # Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "15672:15672"  # Management UI
+      - "5672:5672"    # AMQP
+    networks:
+      - ecommerce-net
+
+  # Celery Worker for Notifications
+  celery-worker:
+    build: ./notification-service
+    command: celery -A notification_service worker --loglevel=info
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - notification-service
+    networks:
+      - ecommerce-net
+
+volumes:
+  user-data:
+  product-data:
+  redis-data:
+  order-data:
+  payment-data:
+  notification-data:
+
+networks:
+  ecommerce-net:
+    driver: bridge
